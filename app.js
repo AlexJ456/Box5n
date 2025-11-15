@@ -2,8 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const app = document.getElementById('app-content');
     const canvas = document.getElementById('box-canvas');
     const container = document.querySelector('.container');
-    const initialWidth = container.clientWidth;
-    const initialHeight = container.clientHeight;
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
 
     const state = {
         isPlaying: false,
@@ -15,11 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sessionComplete: false,
         timeLimitReached: false,
         phaseTime: 4,
-        pulseStartTime: null,
-        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
-        viewportWidth: initialWidth,
-        viewportHeight: initialHeight,
-        prefersReducedMotion: false
+        pulseStartTime: null
     };
 
     let wakeLock = null;
@@ -41,63 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
             case 2: return 'Exhale';
             case 3: return 'Wait';
             default: return '';
-        }
-    }
-
-    const phaseColors = ['#f97316', '#fbbf24', '#38bdf8', '#22c55e'];
-
-    function hexToRgba(hex, alpha) {
-        const normalized = hex.replace('#', '');
-        const bigint = parseInt(normalized, 16);
-        const r = (bigint >> 16) & 255;
-        const g = (bigint >> 8) & 255;
-        const b = bigint & 255;
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-
-    function resizeCanvas() {
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-
-        state.viewportWidth = width;
-        state.viewportHeight = height;
-        state.devicePixelRatio = pixelRatio;
-
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
-        canvas.width = Math.floor(width * pixelRatio);
-        canvas.height = Math.floor(height * pixelRatio);
-
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-        }
-
-        if (!state.isPlaying) {
-            drawScene({ progress: state.sessionComplete ? 1 : 0, showTrail: false, phase: state.count });
-        }
-    }
-
-    window.addEventListener('resize', resizeCanvas, { passive: true });
-
-    function updateMotionPreference(event) {
-        state.prefersReducedMotion = event.matches;
-        if (!state.isPlaying) {
-            drawScene({ progress: state.sessionComplete ? 1 : 0, showTrail: false, phase: state.count });
-        }
-    }
-
-    const motionQuery = typeof window.matchMedia === 'function'
-        ? window.matchMedia('(prefers-reduced-motion: reduce)')
-        : null;
-
-    if (motionQuery) {
-        state.prefersReducedMotion = motionQuery.matches;
-        if (typeof motionQuery.addEventListener === 'function') {
-            motionQuery.addEventListener('change', updateMotionPreference);
-        } else if (typeof motionQuery.addListener === 'function') {
-            motionQuery.addListener(updateMotionPreference);
         }
     }
 
@@ -166,6 +105,8 @@ document.addEventListener('DOMContentLoaded', () => {
             state.sessionComplete = false;
             state.timeLimitReached = false;
             state.pulseStartTime = performance.now();
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             playTone();
             startInterval();
             animate();
@@ -173,8 +114,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             clearInterval(interval);
             cancelAnimationFrame(animationFrameId);
-            drawScene({ progress: 0, showTrail: false, phase: state.count });
-            state.pulseStartTime = null;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             releaseWakeLock();
         }
         render();
@@ -188,10 +129,10 @@ document.addEventListener('DOMContentLoaded', () => {
         state.sessionComplete = false;
         state.timeLimit = '';
         state.timeLimitReached = false;
-        state.pulseStartTime = null;
         clearInterval(interval);
         cancelAnimationFrame(animationFrameId);
-        drawScene({ progress: 0, showTrail: false, phase: state.count });
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         releaseWakeLock();
         render();
     }
@@ -214,6 +155,8 @@ document.addEventListener('DOMContentLoaded', () => {
         state.sessionComplete = false;
         state.timeLimitReached = false;
         state.pulseStartTime = performance.now();
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (audioContext && audioContext.state === 'suspended') {
             audioContext.resume().then(() => {
                 console.log('AudioContext resumed');
@@ -257,131 +200,130 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 1000);
     }
 
-    function drawScene({ progress = 0, phase = state.count, showTrail = state.isPlaying, timestamp = performance.now() } = {}) {
+    function animate(now = performance.now()) {
+        if (!state.isPlaying) return;
         const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        const elapsed = (now - lastStateUpdate) / 1000;
+        const effectiveCountdown = state.countdown - elapsed;
+        let progress = (state.phaseTime - effectiveCountdown) / state.phaseTime;
+        progress = Math.max(0, Math.min(1, progress));
+        const easedProgress = 0.5 - 0.5 * Math.cos(Math.PI * progress);
+        const phase = state.count;
 
-        const width = state.viewportWidth || canvas.clientWidth || canvas.width;
-        const height = state.viewportHeight || canvas.clientHeight || canvas.height;
-        if (!width || !height) {
-            return;
-        }
+        const minDimension = Math.min(canvas.width, canvas.height);
+        let size = minDimension * 0.6;
+        size = Math.min(size, canvas.width - 120, canvas.height - 200);
+        size = Math.max(size, minDimension * 0.4);
 
-        const scale = state.devicePixelRatio || 1;
-        ctx.save();
-        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        const left = (canvas.width - size) / 2;
+        const verticalOffset = Math.min(140, canvas.height * 0.25);
+        let top = (canvas.height - size) / 2 + verticalOffset;
+        top = Math.min(top, canvas.height - size - 40);
+        top = Math.max(top, 40);
 
-        const clampedProgress = Math.max(0, Math.min(1, progress));
-        const easedProgress = 0.5 - (Math.cos(Math.PI * clampedProgress) / 2);
-        const baseSize = Math.min(width, height) * 0.5;
-        const topMargin = 20;
-        const sizeWithoutBreath = Math.min(baseSize, height - topMargin * 2);
-        const verticalOffset = Math.min(height * 0.18, 110);
-        const preferredTop = height / 2 + verticalOffset - sizeWithoutBreath / 2;
-        const top = Math.max(topMargin, Math.min(preferredTop, height - sizeWithoutBreath - topMargin));
-        const left = (width - sizeWithoutBreath) / 2;
-
-        const now = timestamp;
-        const allowMotion = !state.prefersReducedMotion;
-        let breathInfluence = 0;
-        if (phase === 0) {
-            breathInfluence = easedProgress;
-        } else if (phase === 2) {
-            breathInfluence = 1 - easedProgress;
-        } else if (allowMotion) {
-            breathInfluence = 0.3 + 0.2 * (0.5 + 0.5 * Math.sin(now / 350));
-        } else {
-            breathInfluence = 0.3;
-        }
-
-        let pulseBoost = 0;
-        if (allowMotion && state.pulseStartTime !== null) {
-            const pulseElapsed = (now - state.pulseStartTime) / 1000;
-            if (pulseElapsed < 0.6) {
-                pulseBoost = Math.sin((pulseElapsed / 0.6) * Math.PI);
-            }
-        }
-
-        const size = sizeWithoutBreath * (1 + 0.08 * breathInfluence + 0.03 * pulseBoost);
-        const adjustedLeft = left + (sizeWithoutBreath - size) / 2;
-        const adjustedTop = top + (sizeWithoutBreath - size) / 2;
         const points = [
-            { x: adjustedLeft, y: adjustedTop + size },
-            { x: adjustedLeft, y: adjustedTop },
-            { x: adjustedLeft + size, y: adjustedTop },
-            { x: adjustedLeft + size, y: adjustedTop + size }
+            { x: left, y: top + size },
+            { x: left, y: top },
+            { x: left + size, y: top },
+            { x: left + size, y: top + size }
         ];
+
         const startPoint = points[phase];
         const endPoint = points[(phase + 1) % 4];
         const currentX = startPoint.x + easedProgress * (endPoint.x - startPoint.x);
         const currentY = startPoint.y + easedProgress * (endPoint.y - startPoint.y);
 
-        const accentColor = phaseColors[phase] || '#f97316';
-        const shouldShowTrail = allowMotion && showTrail;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.clearRect(0, 0, width, height);
-
-        const gradient = ctx.createRadialGradient(
-            adjustedLeft + size / 2,
-            adjustedTop + size / 2,
-            size * 0.2,
-            adjustedLeft + size / 2,
-            adjustedTop + size / 2,
-            size
-        );
-        gradient.addColorStop(0, hexToRgba(accentColor, 0.18));
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.strokeStyle = hexToRgba('#fcd34d', 0.25);
-        ctx.lineWidth = Math.max(2, size * 0.015);
+        const frameGradient = ctx.createLinearGradient(left, top, left + size, top + size);
+        frameGradient.addColorStop(0, 'rgba(217, 119, 6, 0.85)');
+        frameGradient.addColorStop(0.5, 'rgba(252, 211, 77, 0.6)');
+        frameGradient.addColorStop(1, 'rgba(217, 119, 6, 0.85)');
+        ctx.lineWidth = 4;
         ctx.lineJoin = 'round';
-        ctx.strokeRect(adjustedLeft, adjustedTop, size, size);
+        ctx.strokeStyle = frameGradient;
+        ctx.strokeRect(left, top, size, size);
 
-        ctx.lineWidth = Math.max(4, size * 0.03);
-        ctx.strokeStyle = hexToRgba(accentColor, shouldShowTrail ? 0.8 : 0.45);
-        ctx.shadowColor = hexToRgba(accentColor, 0.5);
-        ctx.shadowBlur = shouldShowTrail ? 15 : 8;
+        const centerX = left + size / 2;
+        const centerY = top + size / 2;
+        const baseBreathRadius = size * 0.22;
+        const breathRange = size * 0.18;
+        let breathProgress;
+        switch (phase) {
+            case 0: // inhale
+                breathProgress = easedProgress;
+                break;
+            case 1: // hold full
+                breathProgress = 1 - 0.15 * (1 - easedProgress);
+                break;
+            case 2: // exhale
+                breathProgress = 1 - easedProgress;
+                break;
+            default: // wait / reset
+                breathProgress = 0.15 * easedProgress;
+                break;
+        }
+
+        const breathingRadius = baseBreathRadius + breathRange * breathProgress;
+        const radialGlow = ctx.createRadialGradient(
+            centerX,
+            centerY,
+            Math.max(0, breathingRadius * 0.2),
+            centerX,
+            centerY,
+            breathingRadius
+        );
+        radialGlow.addColorStop(0, 'rgba(252, 211, 77, 0.35)');
+        radialGlow.addColorStop(1, 'rgba(217, 119, 6, 0.05)');
         ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i <= phase; i++) {
-            ctx.lineTo(points[i].x, points[i].y);
-        }
-        if (shouldShowTrail) {
-            ctx.lineTo(currentX, currentY);
-        }
+        ctx.fillStyle = radialGlow;
+        ctx.arc(centerX, centerY, breathingRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.setLineDash([10, 14]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(252, 211, 77, 0.35)';
+        ctx.arc(centerX, centerY, breathingRadius, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.setLineDash([]);
 
-        const baseRadius = Math.max(8, size * 0.04);
-        let radius = baseRadius * (1 + 0.35 * breathInfluence + 0.25 * pulseBoost);
-        if (allowMotion && (phase === 1 || phase === 3)) {
-            radius += baseRadius * 0.12 * (0.5 + 0.5 * Math.sin(now / 200));
+        ctx.beginPath();
+        ctx.moveTo(startPoint.x, startPoint.y);
+        ctx.lineTo(currentX, currentY);
+        const pathGradient = ctx.createLinearGradient(startPoint.x, startPoint.y, currentX, currentY);
+        pathGradient.addColorStop(0, 'rgba(217, 119, 6, 0.2)');
+        pathGradient.addColorStop(1, 'rgba(248, 113, 113, 0.75)');
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = pathGradient;
+        ctx.stroke();
+
+        if (size > 24) {
+            ctx.beginPath();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = 'rgba(15, 23, 42, 0.45)';
+            ctx.strokeRect(left + 6, top + 6, size - 12, size - 12);
         }
 
-        ctx.beginPath();
-        ctx.arc(currentX, currentY, radius * 1.8, 0, 2 * Math.PI);
-        ctx.fillStyle = hexToRgba(accentColor, 0.25);
-        ctx.fill();
+        let radius = 10;
+        if (state.pulseStartTime !== null) {
+            const pulseElapsed = (now - state.pulseStartTime) / 1000;
+            if (pulseElapsed < 0.6) {
+                const pulseFactor = Math.sin(Math.PI * pulseElapsed / 0.6);
+                radius = 10 + 6 * pulseFactor;
+            }
+        }
 
+        ctx.save();
+        ctx.shadowColor = 'rgba(253, 224, 71, 0.85)';
+        ctx.shadowBlur = 25;
+        ctx.fillStyle = '#f97316';
         ctx.beginPath();
-        ctx.arc(currentX, currentY, radius, 0, 2 * Math.PI);
-        ctx.fillStyle = accentColor;
+        ctx.arc(currentX, currentY, radius, 0, Math.PI * 2);
         ctx.fill();
-
         ctx.restore();
-    }
-
-    function animate() {
-        if (!state.isPlaying) return;
-        const now = performance.now();
-        const elapsed = (now - lastStateUpdate) / 1000;
-        const effectiveCountdown = state.countdown - elapsed;
-        let progress = (state.phaseTime - effectiveCountdown) / state.phaseTime;
-        progress = Math.max(0, Math.min(1, progress));
-
-        drawScene({ progress, timestamp: now });
 
         animationFrameId = requestAnimationFrame(animate);
     }
@@ -396,23 +338,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="instruction">${getInstruction(state.count)}</div>
                 <div class="countdown">${state.countdown}</div>
             `;
-            const phases = ['Inhale', 'Hold', 'Exhale', 'Wait'];
-            html += `<div class="phase-tracker">`;
-            phases.forEach((label, index) => {
-                const phaseColor = phaseColors[index] || '#fde68a';
-                const softPhaseColor = hexToRgba(phaseColor, 0.25);
-                html += `
-                    <div class="phase-item ${index === state.count ? 'active' : ''}" style="--phase-color: ${phaseColor}; --phase-soft: ${softPhaseColor};">
-                        <span class="phase-dot"></span>
-                        <span class="phase-label">${label}</span>
-                    </div>
-                `;
-            });
-            html += `</div>`;
-        }
-        if (state.timeLimitReached && !state.sessionComplete) {
-            const limitMessage = state.isPlaying ? 'Finishing current cycle…' : 'Time limit reached';
-            html += `<div class="limit-warning">${limitMessage}</div>`;
         }
         if (!state.isPlaying && !state.sessionComplete) {
             html += `
@@ -506,11 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('preset-5min').addEventListener('click', () => startWithPreset(5));
             document.getElementById('preset-10min').addEventListener('click', () => startWithPreset(10));
         }
-        if (!state.isPlaying) {
-            drawScene({ progress: state.sessionComplete ? 1 : 0, phase: state.count, showTrail: false });
-        }
     }
 
-    resizeCanvas();
     render();
 });
